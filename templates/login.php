@@ -162,7 +162,7 @@ jQuery(document).ready(function($) {
         $('#zonatech-loading-screen').addClass('fade-out');
         setTimeout(function() {
             $('#zonatech-loading-screen').hide();
-        }, 100);
+        }, 200);
     });
     
     // Password visibility toggle

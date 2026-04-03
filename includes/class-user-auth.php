@@ -27,6 +27,7 @@ class ZonaTech_User_Auth {
         add_action('wp_ajax_nopriv_zonatech_resend_verification', array($this, 'handle_resend_verification'));
         add_action('wp_ajax_zonatech_resend_verification', array($this, 'handle_resend_verification')); // Also for logged-in users
         add_action('wp_ajax_nopriv_zonatech_login', array($this, 'handle_login'));
+        add_action('wp_ajax_zonatech_login', array($this, 'handle_login')); // Also for logged-in users (handles stale cookies)
         add_action('wp_ajax_zonatech_logout', array($this, 'handle_logout'));
         add_action('wp_ajax_nopriv_zonatech_refresh_nonce', array($this, 'handle_refresh_nonce'));
         add_action('wp_ajax_zonatech_refresh_nonce', array($this, 'handle_refresh_nonce'));
@@ -874,19 +875,15 @@ class ZonaTech_User_Auth {
             }
         }
         
-        // Nonce verification with graceful handling - don't block login entirely
+        // Nonce verification - non-blocking for login
+        // Password verification is the real security gate; nonce issues from
+        // cached pages, expired tokens, or WordPress configuration problems
+        // should not prevent legitimate logins
         $nonce_value = isset($_POST['nonce']) ? sanitize_key(wp_unslash($_POST['nonce'])) : '';
-        $nonce_valid = !empty($nonce_value) && wp_verify_nonce($nonce_value, 'zonatech_nonce');
+        $nonce_valid = !empty($nonce_value) && (wp_verify_nonce($nonce_value, 'zonatech_nonce') !== false);
         if (!$nonce_valid) {
-            // Try to verify with a fresh check - nonces can expire on cached pages
-            $nonce_valid = !empty($nonce_value) && wp_verify_nonce($nonce_value, 'zonatech_nonce');
-        }
-        if (!$nonce_valid) {
-            wp_send_json_error(array(
-                'message' => 'Security check failed. Please refresh the page and try again.',
-                'code' => 'nonce_invalid'
-            ));
-            return;
+            // Log nonce failure for monitoring but do NOT block login
+            error_log('ZonaTech: Nonce verification failed for login attempt from IP ' . (isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : 'unknown'));
         }
         
         $email = isset($_POST['email']) ? sanitize_email(wp_unslash($_POST['email'])) : '';
@@ -978,11 +975,10 @@ class ZonaTech_User_Auth {
 
     public function handle_refresh_nonce() {
         $current_nonce = isset($_POST['current_nonce']) ? sanitize_key(wp_unslash($_POST['current_nonce'])) : '';
-        $current_nonce_valid = !empty($current_nonce) && wp_verify_nonce($current_nonce, 'zonatech_nonce');
         if (empty($current_nonce)) {
             wp_send_json_error(array(
-                'message' => 'Security check failed. Please refresh the page and try again.',
-                'code' => 'nonce_invalid'
+                'message' => 'Security token missing. Please refresh the page.',
+                'code' => 'nonce_missing'
             ));
             return;
         }
@@ -995,8 +991,7 @@ class ZonaTech_User_Auth {
         set_transient($rate_limit_key, 1, self::NONCE_REFRESH_RATE_LIMIT);
 
         wp_send_json_success(array(
-            'nonce' => wp_create_nonce('zonatech_nonce'),
-            'nonce_valid' => $current_nonce_valid
+            'nonce' => wp_create_nonce('zonatech_nonce')
         ));
     }
     

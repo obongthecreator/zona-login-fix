@@ -42,9 +42,7 @@
                 const form = $(this);
                 const submitBtn = form.find('button[type="submit"]');
                 const originalText = submitBtn.html();
-                const nonceRetry = form.data('nonce-retry') === true;
                 const handleLoginError = (message) => {
-                    form.removeData('nonce-retry');
                     showNotification(message || 'Login failed. Please try again.', 'error');
                     submitBtn.prop('disabled', false).html(originalText);
                 };
@@ -75,33 +73,15 @@
                     dataType: 'json',
                     timeout: 30000,
                     success: function(response) {
-                        if (response.success) {
-                            form.removeData('nonce-retry');
-                            showNotification(response.data.message || 'Login successful!', 'success');
+                        if (response && response.success) {
+                            form.data('login-success', true);
+                            showNotification((response.data && response.data.message) || 'Login successful!', 'success');
                             setTimeout(function() {
-                                window.location.href = response.data.redirect;
+                                window.location.href = (response.data && response.data.redirect) || zonatech_ajax.site_url + '/zonatech-dashboard/';
                             }, 1000);
                         } else {
-                            const errorCode = response.data && response.data.code ? response.data.code : '';
-                            if (errorCode === 'nonce_invalid') {
-                                if (nonceRetry) {
-                                    handleLoginError(response.data.message);
-                                    return;
-                                }
-                                ZonaTechAuth.refreshNonce().done(function(result) {
-                                    if (result && result.data && result.data.nonce) {
-                                        zonatech_ajax.nonce = result.data.nonce;
-                                        form.data('nonce-retry', true);
-                                        form.trigger('submit');
-                                        return;
-                                    }
-                                    handleLoginError(response.data.message);
-                                }).fail(function() {
-                                    handleLoginError(response.data.message);
-                                });
-                                return;
-                            }
-                            handleLoginError(response.data.message);
+                            var errorMsg = (response && response.data && response.data.message) ? response.data.message : 'Login failed. Please try again.';
+                            handleLoginError(errorMsg);
                         }
                     },
                     error: function(xhr, status, error) {
@@ -123,31 +103,21 @@
                                 const response = JSON.parse(xhr.responseText);
                                 if (response && response.data && response.data.message) {
                                     errorMessage = response.data.message;
-                                    const errorCode = response.data.code || '';
-                                    if (errorCode === 'nonce_invalid') {
-                                        if (nonceRetry) {
-                                            handleLoginError(errorMessage);
-                                            return;
-                                        }
-                                        ZonaTechAuth.refreshNonce().done(function(result) {
-                                            if (result && result.data && result.data.nonce) {
-                                                zonatech_ajax.nonce = result.data.nonce;
-                                                form.data('nonce-retry', true);
-                                                form.trigger('submit');
-                                            } else {
-                                                handleLoginError(errorMessage);
-                                            }
-                                        }).fail(function() {
-                                            handleLoginError('Session expired. Please refresh the page.');
-                                        });
-                                        return;
-                                    }
                                 }
                             } catch (parseError) {
                                 console.warn('Failed to parse error response:', parseError);
                             }
                         }
                         handleLoginError(errorMessage);
+                    },
+                    complete: function() {
+                        // Failsafe: always re-enable submit button after request completes
+                        // This prevents infinite loading state if response handling fails
+                        setTimeout(function() {
+                            if (submitBtn.prop('disabled') && !form.data('login-success')) {
+                                submitBtn.prop('disabled', false).html(originalText);
+                            }
+                        }, 2000);
                     }
                 });
             });
